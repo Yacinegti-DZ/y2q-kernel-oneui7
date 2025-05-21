@@ -1,0 +1,64 @@
+name: Build Samsung Stock Kernel 4.19.325
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-kernel:
+    runs-on: ubuntu-latest
+
+    env:
+      ARCH: arm64
+      CROSS_COMPILE: ${{ github.workspace }}/toolchain/bin/aarch64-linux-android-
+
+    steps:
+      - name: Checkout kernel source
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
+
+      - name: Setup dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libncurses-dev bison flex libssl-dev bc wget unzip curl git
+
+      - name: Download toolchain
+        run: |
+          # Download prebuilt GCC toolchain for aarch64 (Android 4.9)
+          mkdir -p toolchain
+          curl -L https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/heads/master.tar.gz | tar xz -C toolchain --strip-components=1
+
+      - name: Patch kernel version (Makefile)
+        run: |
+          sed -i 's/PATCHLEVEL = 19/PATCHLEVEL = 19/' Makefile
+          sed -i 's/SUBLEVEL = [0-9]\+/SUBLEVEL = 325/' Makefile
+          # Optional: add EXTRAVERSION for clarity
+          sed -i '/EXTRAVERSION =/d' Makefile
+          echo "EXTRAVERSION = -OneUI7" >> Makefile
+
+      - name: Set kernel config with BPF enabled
+        run: |
+          # Copy your defconfig (adjust filename accordingly)
+          cp arch/arm64/configs/y2q_defconfig .config
+          # Enable BPF-related configs non-interactively
+          scripts/config --file .config --enable CONFIG_BPF
+          scripts/config --file .config --enable CONFIG_BPF_SYSCALL
+          scripts/config --file .config --enable CONFIG_HAVE_EBPF_JIT
+          scripts/config --file .config --enable CONFIG_BPF_JIT
+          scripts/config --file .config --enable CONFIG_CGROUP_BPF
+          scripts/config --file .config --enable CONFIG_BPF_EVENTS
+          scripts/config --file .config --enable CONFIG_NETFILTER_XT_MATCH_BPF
+          make olddefconfig
+
+      - name: Build the kernel
+        run: |
+          make -j$(nproc)
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: kernel-build
+          path: arch/arm64/boot/Image.gz-dtb
